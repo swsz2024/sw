@@ -77,13 +77,16 @@ class MMseqs2:
 
   
     def _gpu_flag_argument(self) -> str:
-        """Return the value to pass to the ``--gpu`` flag."""
+        """Return the number of GPUs to pass to the ``--gpu`` flag."""
 
         if not self.gpu_devices:
             return "1"
 
-        gpu_arg = ",".join(device for device in self.gpu_devices if device)
-        return gpu_arg or "1"
+        # ``--gpu`` expects a count, not an explicit device list. We still
+        # honour the resolved devices through ``CUDA_VISIBLE_DEVICES`` but make
+        # sure we request the correct number of GPUs here.
+        active_devices = [device for device in self.gpu_devices if device]
+        return str(len(active_devices)) if active_devices else "1"
 
     def _run_command(self, cmd: Sequence[str]) -> None:
         """Runs command with proper environment and logging."""
@@ -93,6 +96,9 @@ class MMseqs2:
             env["CUDA_VISIBLE_DEVICES"] = ",".join(self.gpu_devices)
 
         logging.info('Running command: %s', ' '.join(cmd))
+        logging.debug(
+            "Using CUDA_VISIBLE_DEVICES=%s", env.get("CUDA_VISIBLE_DEVICES", "<unset>")
+        )
         try:
             subprocess.run(
                 cmd, env=env, capture_output=True, check=True, text=True
