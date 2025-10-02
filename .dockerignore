@@ -1,0 +1,38 @@
+# Ignore local tool directories
+mmseqs/
+hmmer/
+
+# Ignore compressed archives if they exist
+mmseqs.tar.gz
+hmmer.tar.gz
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Ignore virtual environments
+.venv/
+venv/
+env/
+
+# Ignore output directories
+output/
+*.pkl
+
+# Ignore git
+.git/
+.gitignore
+
+# Ignore IDE
+.vscode/
+.idea/
+*.swp
+*.swo
