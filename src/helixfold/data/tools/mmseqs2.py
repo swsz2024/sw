@@ -88,12 +88,16 @@ class MMseqs2:
         active_devices = [device for device in self.gpu_devices if device]
         return str(len(active_devices)) if active_devices else "1"
 
-    def _run_command(self, cmd: Sequence[str]) -> None:
+    def _run_command(self, cmd: Sequence[str], *, use_gpu_env: bool = True) -> None:
         """Runs command with proper environment and logging."""
         env = os.environ.copy()
 
-        if self.gpu_devices:
+        if use_gpu_env and self.gpu_devices:
             env["CUDA_VISIBLE_DEVICES"] = ",".join(self.gpu_devices)
+        elif not use_gpu_env:
+            # Ensure GPU visibility constraints are removed for CPU fallbacks.
+            env.pop("CUDA_VISIBLE_DEVICES", None)
+            env.pop("NVIDIA_VISIBLE_DEVICES", None)
 
         logging.info('Running command: %s', ' '.join(cmd))
         logging.debug(
@@ -109,6 +113,37 @@ class MMseqs2:
             if exc.stderr:
                 logging.error("stderr from failed MMseqs2 command:\n%s", exc.stderr)
             raise
+
+    def _should_retry_on_cpu(self, exc: subprocess.CalledProcessError) -> bool:
+        """Return True if the failure should trigger a CPU retry."""
+
+        failure_output = ""
+        if exc.stdout:
+            failure_output += exc.stdout
+        if exc.stderr:
+            failure_output += exc.stderr
+
+        oom_signatures = (
+            "CUDA error: out of memory",
+            "Ungapped prefilter died",
+        )
+        return any(signature in failure_output for signature in oom_signatures)
+
+    @staticmethod
+    def _strip_gpu_flags(cmd: Sequence[str]) -> Sequence[str]:
+        """Remove GPU-related flags from the provided command sequence."""
+
+        stripped = []
+        skip_next = False
+        for token in cmd:
+            if skip_next:
+                skip_next = False
+                continue
+            if token == "--gpu":
+                skip_next = True
+                continue
+            stripped.append(token)
+        return stripped
         # process = subprocess.run(
         #     cmd, env=env, capture_output=True, check=True, text=True
         # )
@@ -144,11 +179,22 @@ class MMseqs2:
                 db_gpu,
                 result_db,
                 query_tmp_dir,
-                "--gpu", self._gpu_flag_argument(),
+                "--gpu",
+                self._gpu_flag_argument(),
                 #"--gpu-server", "1",
-                "--db-load-mode", "2",
+                "--db-load-mode",
+                "2",
             ]
-            self._run_command(cmd)
+            try:
+                self._run_command(cmd)
+            except subprocess.CalledProcessError as exc:
+                if not self._should_retry_on_cpu(exc):
+                    raise
+                logging.warning(
+                    "MMseqs2 GPU search failed due to GPU resource limits; retrying on CPU"
+                )
+                cpu_cmd = self._strip_gpu_flags(cmd)
+                self._run_command(cpu_cmd, use_gpu_env=False)
 
             # Convert to sto format
             cmd = [
