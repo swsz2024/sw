@@ -22,7 +22,7 @@ class MMseqs2:
         e_value: float = 0.0001,
         max_sequences: int = 10000,
         sensitivity: float = 7.5,
-        gpu_devices: Sequence[str] = ("4", "5", "6")):
+        gpu_devices: Optional[Sequence[str]] = None):
         """Initializes the Python MMseqs2 wrapper (GPU-only).
 
         Args:
@@ -31,7 +31,8 @@ class MMseqs2:
             e_value: E-value cutoff.
             max_sequences: Maximum number of sequences to return.
             sensitivity: Search sensitivity (from -s parameter).
-            gpu_devices: List of GPU devices to use (e.g. ["0", "1"]).
+            gpu_devices: Optional list of GPU device identifiers. If None, the
+                value is inferred from the current environment variables.
         """
         self.binary_path = binary_path
         self.database_path = database_path
@@ -43,13 +44,42 @@ class MMseqs2:
         self.e_value = e_value
         self.max_sequences = max_sequences
         self.sensitivity = sensitivity
-        self.gpu_devices = gpu_devices
+        if gpu_devices is None:
+            gpu_devices = self._resolve_gpu_devices_from_env()
+
+        self.gpu_devices = tuple(gpu_devices)
+
+
+    def _resolve_gpu_devices_from_env(self) -> Sequence[str]:
+        """Determine visible GPU devices from environment variables."""
+
+        # Prefer an explicit override so that callers can fully control
+        # the GPU visibility without modifying code.
+        explicit = os.environ.get("MMSEQS_GPU_DEVICES")
+        if explicit:
+            devices = [d.strip() for d in explicit.split(",") if d.strip()]
+            if devices:
+                return devices
+
+        # Fall back to the CUDA/NVIDIA visibility settings inherited from the
+        # launcher (e.g. docker run --gpus or CUDA_VISIBLE_DEVICES).
+        for env_name in ("CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES"):
+            value = os.environ.get(env_name)
+            if value and value.lower() != "all":
+                devices = [d.strip() for d in value.split(",") if d.strip()]
+                if devices:
+                    return devices
+
+        # If nothing is specified, default to the first GPU (index 0).
+        return ("0",)
 
   
     def _run_command(self, cmd: Sequence[str]) -> None:
         """Runs command with proper environment and logging."""
         env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = ",".join(self.gpu_devices)
+
+        if self.gpu_devices:
+            env["CUDA_VISIBLE_DEVICES"] = ",".join(self.gpu_devices)
         
         logging.info('Running command: %s', ' '.join(cmd))
         subprocess.run(
